@@ -46,7 +46,7 @@ func (r *colResizer) CreateRenderer() fyne.WidgetRenderer {
 
 func (r *colResizer) Dragged(e *fyne.DragEvent) {
 	if r.onDrag != nil {
-		// use e.Dragged.DX from DragEvent
+		// use Dragged.DX, for some reason e.DeltaX is preferred by copilot yet it doesn't exist
 		r.onDrag(e.Dragged.DX)
 	}
 }
@@ -584,20 +584,24 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 		visSet[n] = true
 	}
 
-	// build effective schema in order
+	// build effective schema in order and remember original indexes so header resizers map to same colWidths
 	effective := []FieldDef{}
-	for _, f := range schema {
+	origIndexes := []int{}
+	for i, f := range schema {
 		if showAll || visSet[f.Name] {
 			effective = append(effective, f)
+			origIndexes = append(origIndexes, i)
 		}
 	}
 
-	// column resizing constraints
-	const minColWidth = 40.0
+	// column resizing constraints and sizing constants (use float32 for fyne sizes)
+	const minColWidth float32 = 40.0
+	const resizerWidth float32 = 6.0 // width of the header resizer handle; mirror resizer MinSize()
 	// default heights
-	const singleLineHeight = 30.0
-	const listItemHeight = 20.0
+	const singleLineHeight float32 = 30.0
+	const listItemHeight float32 = 20.0
 	const listMaxVisible = 3
+	const maxStringLines = 10 // hard cap for string height growth
 
 	// Header row
 	headerBg := canvas.NewRectangle(color.NRGBA{R: 240, G: 240, B: 240, A: 20})
@@ -606,17 +610,18 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 		label := widget.NewLabel(f.Label)
 		label.Alignment = fyne.TextAlignLeading
 
-		cell := container.NewStack(headerBg, container.NewHBox(label))
+		// ensure label expands to the full header cell width (avoid HBox shrinking)
+		cell := container.NewStack(headerBg, container.NewMax(label))
 
-		// adjust index into colWidths (keep using original column indices if available)
-		widx := ci
+		// use original schema index for width mapping so header and rows stay aligned
+		widx := origIndexes[ci]
 		if widx >= len(colWidths) {
 			widx = len(colWidths) - 1
 		}
 
 		// resizer clamps to minimum width
 		res := newColResizer(func(dx float32) {
-			newW := float32(math.Max(minColWidth, float64(colWidths[widx]+dx)))
+			newW := float32(math.Max(float64(minColWidth), float64(colWidths[widx]+dx)))
 			if newW != colWidths[widx] {
 				colWidths[widx] = newW
 				populateTableGrid(win, rowsContainer, db, schema, colWidths, visibleCols)
@@ -626,7 +631,7 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 		cellWrap := container.New(layout.NewGridWrapLayout(fyne.NewSize(colWidths[widx], singleLineHeight)), cell)
 		headerRow.Add(container.NewHBox(cellWrap, res))
 	}
-	// Actions header (no resizer)
+	// Actions header (no resizer) uses last colWidths index
 	actionLabel := widget.NewLabel("Actions")
 	actionCell := container.NewStack(headerBg, actionLabel)
 	actWrap := container.New(layout.NewGridWrapLayout(fyne.NewSize(colWidths[len(colWidths)-1], singleLineHeight)), actionCell)
@@ -644,10 +649,14 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 	for ri, r := range rows {
 		mergedData := mergeWithSchema(schema, r.Data)
 
-		// compute row height dynamically: base singleLineHeight but expand for []string fields
+		// compute row height dynamically:
+		// - single-line fields default to singleLineHeight and are vertically centered
+		// - []string fields expand up to listMaxVisible items (rest scroll)
+		// - string fields expand with explicit newlines (multi-line entry)
 		rowH := singleLineHeight
 		for _, f := range effective {
-			if f.Type == "[]string" {
+			switch f.Type {
+			case "[]string":
 				var listLen int
 				if v, ok := mergedData[f.Name]; ok {
 					switch t := v.(type) {
@@ -666,8 +675,22 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 					visible = listMaxVisible
 				}
 				h := float32(visible)*listItemHeight + 6 // padding
-				if h > float32(rowH) {
-					rowH = float64(h)
+				if h > rowH {
+					rowH = h
+				}
+			case "string", "link":
+				// allow explicit newlines to increase height; cap growth
+				val := ""
+				if v, ok := mergedData[f.Name]; ok {
+					val = fmt.Sprintf("%v", v)
+				}
+				lines := strings.Count(val, "\n") + 1
+				if lines > maxStringLines {
+					lines = maxStringLines
+				}
+				h := float32(lines) * (listItemHeight + 2) // slightly larger line height for wrapped text
+				if h > rowH {
+					rowH = h
 				}
 			}
 		}
@@ -675,9 +698,9 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 		// alternating row color
 		var bg color.NRGBA
 		if ri%2 == 0 {
-			bg = color.NRGBA{R: 250, G: 250, B: 250, A: 255}
+			bg = color.NRGBA{R: 250, G: 250, B: 250, A: 20}
 		} else {
-			bg = color.NRGBA{R: 245, G: 245, B: 255, A: 200}
+			bg = color.NRGBA{R: 245, G: 245, B: 255, A: 40}
 		}
 
 		rowBox := container.NewHBox()
@@ -685,8 +708,8 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 			rect := canvas.NewRectangle(bg)
 			var cell fyne.CanvasObject
 
-			// column width index
-			widx := ci
+			// map to original column index for width
+			widx := origIndexes[ci]
 			if widx >= len(colWidths) {
 				widx = len(colWidths) - 1
 			}
@@ -695,8 +718,8 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 			case "int":
 				if strings.EqualFold(f.Name, "ID") {
 					lbl := widget.NewLabel(fmt.Sprintf("%v", r.ID))
-					// center vertically
-					cell = container.NewVBox(layout.NewSpacer(), container.NewHBox(lbl), layout.NewSpacer())
+					inner := container.NewVBox(layout.NewSpacer(), container.NewHBox(lbl), layout.NewSpacer())
+					cell = container.NewMax(inner)
 				} else {
 					val := ""
 					if v, ok := mergedData[f.Name]; ok {
@@ -723,8 +746,8 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 						}
 						_ = updateField(db, localID, fieldName, v)
 					}
-					// vertically center single line
-					cell = container.NewVBox(layout.NewSpacer(), entry, layout.NewSpacer())
+					// make entry fill the full cell height so bottoms align
+					cell = container.NewMax(entry)
 				}
 			case "string":
 				val := ""
@@ -735,16 +758,19 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 						val = fmt.Sprintf("%v", v)
 					}
 				}
-				entry := widget.NewEntry()
+				// multiline editor
+				entry := widget.NewMultiLineEntry()
 				entry.SetText(val)
 				localID := r.ID
 				fieldName := f.Name
 				entry.OnChanged = func(s string) {
 					_ = updateField(db, localID, fieldName, s)
 				}
-				cell = container.NewVBox(layout.NewSpacer(), entry, layout.NewSpacer())
+				// fill the cell
+				cell = container.NewMax(entry)
 			case "link":
-				// show label (blue/red) and support left-click => edit, right-click => open file
+				// existing link handling builds `swap` (label/entry) and `overlay`
+				// ensure the visual content fills the cell by wrapping swap into Max
 				curText := ""
 				if v, ok := mergedData[f.Name]; ok {
 					if s, ok := v.(string); ok {
@@ -753,36 +779,26 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 						curText = fmt.Sprintf("%v", v)
 					}
 				}
-				// determine color by existence
-				txtColor := color.NRGBA{R: 0, G: 0, B: 200, A: 255} // blue
+				txtColor := color.NRGBA{R: 0, G: 0, B: 200, A: 255}
 				if curText != "" {
 					full := filepath.Join(exeDir, curText)
 					if _, err := os.Stat(full); err != nil {
-						// not found => red
 						txtColor = color.NRGBA{R: 200, G: 0, B: 0, A: 255}
 					}
-					fmt.Printf("Link field value: %s (full path: %s)\n", curText, full)
 				}
 				label := canvas.NewText(curText, txtColor)
 				label.TextStyle = fyne.TextStyle{Italic: false}
-
-				// container to swap between label and entry
-				swap := container.NewStack(label)
-
-				// declare overlay first so closures can reference it safely
+				// center label vertically within a vbox, then make it expand via Max
+				labelBox := container.NewVBox(layout.NewSpacer(), container.NewHBox(label), layout.NewSpacer())
+				swap := container.NewStack(labelBox) // will be swapped to entry when editing
 				var overlay *clickableOverlay
-
-				// overlay handlers
 				onLeft := func() {
-					// replace with an entry for editing
 					entry := widget.NewEntry()
 					entry.SetText(label.Text)
 					localID := r.ID
 					fieldName := f.Name
-
 					entry.OnSubmitted = func(s string) {
 						_ = updateField(db, localID, fieldName, s)
-						// update label text & color
 						cur := s
 						colorNow := color.NRGBA{R: 0, G: 0, B: 200, A: 255}
 						if cur != "" {
@@ -794,46 +810,39 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 						label.Text = cur
 						label.Color = colorNow
 						label.Refresh()
-						// swap back to label and show overlay again
-						swap.Objects = []fyne.CanvasObject{label}
+						swap.Objects = []fyne.CanvasObject{labelBox}
 						swap.Refresh()
 						if overlay != nil {
 							overlay.Show()
 						}
 					}
-					// persist live changes while editing
 					entry.OnChanged = func(s string) {
 						_ = updateField(db, localID, fieldName, s)
 					}
-
-					// hide overlay so the entry can receive focus and keyboard input
 					if overlay != nil {
 						overlay.Hide()
 					}
+					// replace with an entry that will fill the cell
 					swap.Objects = []fyne.CanvasObject{entry}
 					swap.Refresh()
 					// focus the entry so the user can type immediately
 					win.Canvas().Focus(entry)
 				}
-
 				onRight := func() {
-					// try to open file; if fails, mark red
 					target := filepath.Join(exeDir, label.Text)
 					if label.Text == "" {
 						dialog.ShowInformation("Open link", "No file specified", win)
 						return
 					}
 					if err := exec.Command("xdg-open", target).Start(); err != nil {
-						// mark red
 						label.Color = color.NRGBA{R: 200, G: 0, B: 0, A: 255}
 						label.Refresh()
 						dialog.ShowError(fmt.Errorf("open failed: %w", err), win)
 					}
 				}
-
-				// now create the overlay with the handlers
 				overlay = newClickableOverlay(onLeft, onRight)
-				cell = container.NewStack(swap, overlay)
+				// ensure swap + overlay fill the cell and align with neighbors
+				cell = container.NewMax(container.NewStack(swap, overlay))
 			case "[]string":
 				var list []string
 				if v, ok := mergedData[f.Name]; ok {
@@ -850,9 +859,7 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 						}
 					}
 				}
-				// show up to listMaxVisible items, scrolling for more
 				editor := makeListEditorInline(win, db, r.ID, list, f.Name)
-				// try to set visible height
 				if sc, ok := editor.(*container.Scroll); ok {
 					visible := len(list)
 					if visible > listMaxVisible {
@@ -864,24 +871,30 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 					h := float32(visible)*listItemHeight + 6
 					sc.SetMinSize(fyne.NewSize(colWidths[widx], h))
 				}
-				cell = container.NewVBox(editor)
+				// ensure the list editor fills the full cell height
+				cell = container.NewMax(editor)
 			default:
 				val := ""
 				if v, ok := mergedData[f.Name]; ok {
 					val = fmt.Sprintf("%v", v)
 				}
-				entry := widget.NewEntry()
+				entry := widget.NewMultiLineEntry()
 				entry.SetText(val)
 				localID := r.ID
 				fieldName := f.Name
 				entry.OnChanged = func(s string) {
 					_ = updateField(db, localID, fieldName, s)
 				}
-				cell = container.NewVBox(layout.NewSpacer(), entry, layout.NewSpacer())
+				cell = container.NewMax(entry)
 			}
 
-			cellWrap := container.New(layout.NewGridWrapLayout(fyne.NewSize(colWidths[widx], float32(rowH))), container.NewStack(rect, cell))
+			cellWrap := container.New(layout.NewGridWrapLayout(fyne.NewSize(colWidths[widx], rowH)), container.NewStack(rect, cell))
 			rowBox.Add(cellWrap)
+
+			// add an invisible spacer matching the resizer width used in the header so columns align
+			// only add spacer for data columns (header had a resizer after each data column)
+			spacer := container.New(layout.NewGridWrapLayout(fyne.NewSize(resizerWidth, rowH)), canvas.NewRectangle(color.Transparent))
+			rowBox.Add(spacer)
 		}
 
 		// Actions (trash icon button)
@@ -924,7 +937,7 @@ func makeListEditorInline(win fyne.Window, db *sql.DB, entryID int, initial []st
 
 	var createEntry func(string) *widget.Entry
 	createEntry = func(text string) *widget.Entry {
-		e := widget.NewEntry()
+		e := widget.NewMultiLineEntry()
 		e.SetText(text)
 
 		e.OnSubmitted = func(sub string) {

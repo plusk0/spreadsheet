@@ -1,10 +1,11 @@
 [
   {"Name":"ID","Type":"int","Label":"ID"},
+  {"Name":"LinkField","Type":"link","Label":"Link"},
   {"Name":"Name","Type":"string","Label":"Name"},
   {"Name":"List1","Type":"[]string","Label":"List1"},
   {"Name":"List2","Type":"[]string","Label":"List2"},
   {"Name":"List3","Type":"[]string","Label":"List3"},
   {"Name":"IntField","Type":"int","Label":"IntField"},
-  {"Name":"StringField","Type":"string","Label":"StringField"},
-  {"Name":"LinkField","Type":"link","Label":"Link"}
+  {"Name":"StringField","Type":"string","Label":"StringField"}
+  
 ]
