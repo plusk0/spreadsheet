@@ -611,7 +611,7 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 		label.Alignment = fyne.TextAlignLeading
 
 		// ensure label expands to the full header cell width (avoid HBox shrinking)
-		cell := container.NewStack(headerBg, container.NewMax(label))
+		cell := container.NewStack(headerBg, container.NewStack(label))
 
 		// use original schema index for width mapping so header and rows stay aligned
 		widx := origIndexes[ci]
@@ -719,7 +719,7 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 				if strings.EqualFold(f.Name, "ID") {
 					lbl := widget.NewLabel(fmt.Sprintf("%v", r.ID))
 					inner := container.NewVBox(layout.NewSpacer(), container.NewHBox(lbl), layout.NewSpacer())
-					cell = container.NewMax(inner)
+					cell = container.NewStack(inner)
 				} else {
 					val := ""
 					if v, ok := mergedData[f.Name]; ok {
@@ -747,7 +747,7 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 						_ = updateField(db, localID, fieldName, v)
 					}
 					// make entry fill the full cell height so bottoms align
-					cell = container.NewMax(entry)
+					cell = container.NewStack(entry)
 				}
 			case "string":
 				val := ""
@@ -767,7 +767,7 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 					_ = updateField(db, localID, fieldName, s)
 				}
 				// fill the cell
-				cell = container.NewMax(entry)
+				cell = container.NewStack(entry)
 			case "link":
 				// existing link handling builds `swap` (label/entry) and `overlay`
 				// ensure the visual content fills the cell by wrapping swap into Max
@@ -842,7 +842,7 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 				}
 				overlay = newClickableOverlay(onLeft, onRight)
 				// ensure swap + overlay fill the cell and align with neighbors
-				cell = container.NewMax(container.NewStack(swap, overlay))
+				cell = container.NewStack(container.NewStack(swap, overlay))
 			case "[]string":
 				var list []string
 				if v, ok := mergedData[f.Name]; ok {
@@ -872,7 +872,7 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 					sc.SetMinSize(fyne.NewSize(colWidths[widx], h))
 				}
 				// ensure the list editor fills the full cell height
-				cell = container.NewMax(editor)
+				cell = container.NewStack(editor)
 			default:
 				val := ""
 				if v, ok := mergedData[f.Name]; ok {
@@ -885,7 +885,7 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 				entry.OnChanged = func(s string) {
 					_ = updateField(db, localID, fieldName, s)
 				}
-				cell = container.NewMax(entry)
+				cell = container.NewStack(entry)
 			}
 
 			cellWrap := container.New(layout.NewGridWrapLayout(fyne.NewSize(colWidths[widx], rowH)), container.NewStack(rect, cell))
@@ -899,14 +899,15 @@ func populateTableGrid(win fyne.Window, rowsContainer *fyne.Container, db *sql.D
 
 		// Actions (trash icon button)
 		trash := widget.NewButton("🗑", func() {
-			dialog.ShowConfirm("Delete", "Delete this row?", func(yes bool) {
-				if !yes {
-					return
-				}
-				_ = deleteRow(db, r.ID)
-				populateTableGrid(win, rowsContainer, db, schema, colWidths, visibleCols)
-			}, win)
-		})
+			/*dialog.ShowConfirm("Delete", "Delete this row?", func(yes bool) {
+			if !yes {
+				return
+			}*/
+			_ = deleteRow(db, r.ID)
+			populateTableGrid(win, rowsContainer, db, schema, colWidths, visibleCols)
+		}) //, win)
+		//}
+
 		actWrap := container.New(layout.NewGridWrapLayout(fyne.NewSize(colWidths[len(colWidths)-1], float32(rowH))), container.NewStack(canvas.NewRectangle(bg), trash))
 		rowBox.Add(actWrap)
 
@@ -937,7 +938,7 @@ func makeListEditorInline(win fyne.Window, db *sql.DB, entryID int, initial []st
 
 	var createEntry func(string) *widget.Entry
 	createEntry = func(text string) *widget.Entry {
-		e := widget.NewMultiLineEntry()
+		e := widget.NewEntry()
 		e.SetText(text)
 
 		e.OnSubmitted = func(sub string) {
